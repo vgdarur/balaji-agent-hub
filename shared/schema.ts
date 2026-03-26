@@ -48,7 +48,14 @@ export const agents: Agent[] = [
 ];
 
 export const defaultEmailToAgentMap: Record<string, string[]> = {
+  // Admin
   "vgdarur@gmail.com": ["venuja1","krishnaja1","udayja1","shasheeja1","rajja1","dunteesja1","purvaja1","ramanaja1"],
+  // Recruiters — see all candidates
+  "ankitkamra1920@gmail.com": ["venuja1","krishnaja1","udayja1","shasheeja1","rajja1","dunteesja1","purvaja1","ramanaja1"],
+  "pavansurya2701@gmail.com": ["venuja1","krishnaja1","udayja1","shasheeja1","rajja1","dunteesja1","purvaja1","ramanaja1"],
+  "vamshinv9@gmail.com": ["venuja1","krishnaja1","udayja1","shasheeja1","rajja1","dunteesja1","purvaja1","ramanaja1"],
+  "venubhavana@gmail.com": ["venuja1","krishnaja1","udayja1","shasheeja1","rajja1","dunteesja1","purvaja1","ramanaja1"],
+  // Candidates — see only their own
   "chitturiuday@gmail.com": ["udayja1"],
   "shashidevops6@gmail.com": ["shasheeja1"],
   "rajavamshisvln@gmail.com": ["rajja1"],
@@ -60,6 +67,14 @@ export const defaultEmailToAgentMap: Record<string, string[]> = {
 };
 
 export const adminEmails = ["vgdarur@gmail.com"];
+
+// Recruiters can see all agents and update job statuses on behalf of candidates
+export const recruiterEmails = [
+  "ankitkamra1920@gmail.com",
+  "pavansurya2701@gmail.com",
+  "vamshinv9@gmail.com",
+  "venubhavana@gmail.com",
+];
 
 export const JOB_STATUSES = ["New", "Applied", "Interview", "Offer", "Rejected", "Pending", "Skipped"] as const;
 export type JobStatus = typeof JOB_STATUSES[number];

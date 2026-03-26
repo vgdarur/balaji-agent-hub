@@ -5,7 +5,7 @@ import session from "express-session";
 import createMemoryStore from "memorystore";
 import { storage } from "./storage";
 import { initializeDatabase } from "./db";
-import { adminEmails, agents } from "@shared/schema";
+import { adminEmails, recruiterEmails, agents } from "@shared/schema";
 
 const GOOGLE_CLIENT_ID = "19615734221-469n6ahpnd9oocr1en0jo9s737l1f8eo.apps.googleusercontent.com";
 const oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -239,12 +239,20 @@ export async function registerRoutes(
 
   app.patch("/api/jobs/:id/status", requireAuth, async (req: Request, res: Response) => {
     const email = req.session.user!.email;
-    const agentIds = await storage.getAgentIdsForEmail(email);
     const jobId = parseInt(req.params.id);
     const { status } = req.body;
 
     if (!status) {
       return res.status(400).json({ message: "Missing status" });
+    }
+
+    // Admins and recruiters can update any job — candidates only their own
+    const isRecruiterOrAdmin = adminEmails.includes(email) || recruiterEmails.includes(email);
+    let agentIds: string[];
+    if (isRecruiterOrAdmin) {
+      agentIds = agents.map(a => a.id); // all agents
+    } else {
+      agentIds = await storage.getAgentIdsForEmail(email);
     }
 
     const updated = await storage.updateJobStatus(jobId, status, agentIds);
