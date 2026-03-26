@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Switch, Route, Router } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
@@ -8,10 +9,12 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import AdminPage from "@/pages/admin";
+import ReportsPage from "@/pages/reports";
 import NotFound from "@/pages/not-found";
 
 function AppContent() {
-  const { user, loading } = useAuth();
+  const { user, isAdmin, loading } = useAuth();
+  const [showReports, setShowReports] = useState(false);
 
   if (loading) {
     return (
@@ -28,10 +31,14 @@ function AppContent() {
     return <LoginPage />;
   }
 
+  if (showReports && isAdmin) {
+    return <ReportsPage user={user} onBack={() => setShowReports(false)} />;
+  }
+
   return (
     <Router hook={useHashLocation}>
       <Switch>
-        <Route path="/" component={DashboardPage} />
+        <Route path="/">{() => <DashboardPage onReports={() => setShowReports(true)} />}</Route>
         <Route path="/admin" component={AdminPage} />
         <Route component={NotFound} />
       </Switch>

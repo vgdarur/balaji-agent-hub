@@ -27,6 +27,7 @@ import {
   ChevronDown,
   Play,
   Loader2,
+  BarChart2,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -116,7 +117,7 @@ function AgentBadge({ agentId }: { agentId: string }) {
   );
 }
 
-export default function DashboardPage() {
+export default function DashboardPage({ onReports }: { onReports?: () => void } = {}) {
   const { user, isAdmin, agents: userAgents, logout } = useAuth();
   const [, setLocation] = useLocation();
   const [selectedAgent, setSelectedAgent] = useState<string>("all");
@@ -224,9 +225,9 @@ export default function DashboardPage() {
           ))}
         </ScrollArea>
 
-        {/* Admin Panel button */}
+        {/* Admin Panel button & Reports */}
         {isAdmin && (
-          <div className="p-3 border-t border-sidebar-border">
+          <div className="p-3 border-t border-sidebar-border space-y-1.5">
             <button
               onClick={() => setLocation("/admin")}
               className="w-full text-left px-3 py-2 rounded-lg text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors flex items-center gap-2"
@@ -235,6 +236,15 @@ export default function DashboardPage() {
               <Shield className="w-4 h-4" />
               Admin Panel
             </button>
+            {onReports && (
+              <button
+                onClick={onReports}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors border border-blue-500/20"
+              >
+                <BarChart2 className="w-3.5 h-3.5 shrink-0" />
+                Reports
+              </button>
+            )}
           </div>
         )}
 

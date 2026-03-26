@@ -350,5 +350,66 @@ export async function registerRoutes(
     });
   });
 
+  // Admin-only reports endpoint
+  app.get("/api/admin/reports", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    const pool = new (require("pg").Pool)({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    try {
+      // Daily agent runs (last 7 days)
+      const runsResult = await pool.query(`
+        SELECT agent, run_date, jobs_found, sources_searched, status, completed_at
+        FROM agent_runs
+        ORDER BY run_date DESC, completed_at DESC
+        LIMIT 100
+      `);
+
+      // Total applications per agent
+      const totalsResult = await pool.query(`
+        SELECT agent, status, COUNT(*) as count
+        FROM hub_jobs
+        GROUP BY agent, status
+        ORDER BY agent, status
+      `);
+
+      // Job status breakdown per agent
+      const statusResult = await pool.query(`
+        SELECT agent,
+          COUNT(*) FILTER (WHERE status = 'New') as new_count,
+          COUNT(*) FILTER (WHERE status = 'Applied') as applied_count,
+          COUNT(*) FILTER (WHERE status = 'Interview') as interview_count,
+          COUNT(*) FILTER (WHERE status = 'Offer') as offer_count,
+          COUNT(*) FILTER (WHERE status = 'Rejected') as rejected_count,
+          COUNT(*) as total_count
+        FROM hub_jobs
+        GROUP BY agent
+        ORDER BY agent
+      `);
+
+      // Failed runs
+      const failedResult = await pool.query(`
+        SELECT agent, run_date, status, completed_at
+        FROM agent_runs
+        WHERE status = 'failed'
+        ORDER BY run_date DESC
+        LIMIT 20
+      `);
+
+      await pool.end();
+
+      res.json({
+        dailyRuns: runsResult.rows,
+        totals: totalsResult.rows,
+        statusBreakdown: statusResult.rows,
+        failedRuns: failedResult.rows,
+      });
+    } catch (err: any) {
+      await pool.end();
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }
