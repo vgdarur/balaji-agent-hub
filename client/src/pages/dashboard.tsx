@@ -25,6 +25,8 @@ import {
   LogOut,
   Shield,
   ChevronDown,
+  Play,
+  Loader2,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -120,6 +122,22 @@ export default function DashboardPage() {
   const [selectedAgent, setSelectedAgent] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [running, setRunning] = useState(false);
+
+  const handleRunNow = async () => {
+    if (running) return;
+    setRunning(true);
+    try {
+      await apiRequest("POST", "/api/agents/run-now");
+    } catch (err) {
+      console.error("Run agents failed:", err);
+    }
+    // Keep running state for 30s then reset
+    setTimeout(() => {
+      setRunning(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+    }, 30000);
+  };
 
   const queryParams = new URLSearchParams();
   if (selectedAgent !== "all") queryParams.set("agent", selectedAgent);
@@ -245,17 +263,29 @@ export default function DashboardPage() {
       <main className="flex-1 overflow-auto">
         <div className="p-6 max-w-7xl">
           {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-xl font-bold text-foreground" data-testid="text-dashboard-title">
-              {selectedAgent === "all"
-                ? "All Agents Dashboard"
-                : `${allAgents.find((a) => a.id === selectedAgent)?.name || ""} Dashboard`}
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {selectedAgent === "all"
-                ? "Overview of all agent job tracking"
-                : allAgents.find((a) => a.id === selectedAgent)?.role || ""}
-            </p>
+          <div className="mb-6 flex items-start justify-between">
+            <div>
+              <h1 className="text-xl font-bold text-foreground" data-testid="text-dashboard-title">
+                {selectedAgent === "all"
+                  ? "All Agents Dashboard"
+                  : `${allAgents.find((a) => a.id === selectedAgent)?.name || ""} Dashboard`}
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                {selectedAgent === "all"
+                  ? "Overview of all agent job tracking"
+                  : allAgents.find((a) => a.id === selectedAgent)?.role || ""}
+              </p>
+            </div>
+            {isAdmin && (
+              <button
+                onClick={handleRunNow}
+                disabled={running}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              >
+                {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                {running ? "Running..." : "Run Agents Now"}
+              </button>
+            )}
           </div>
 
           {/* KPI Cards */}

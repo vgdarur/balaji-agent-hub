@@ -34,6 +34,98 @@ function requireAdmin(req: Request, res: Response, next: () => void) {
   next();
 }
 
+async function runAgentsInBackground() {
+  const { Pool } = require("pg");
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+
+  const TELEGRAM_BOT = "8603225576:AAHhD-C4_DZ8f__MXTV2cqyJN-AkxNrEyXo";
+  const TELEGRAM_CHAT = "-1003828540142";
+
+  const AGENTS = [
+    { id: "krishnaja1", name: "V Krishna",   role: "Java Full Stack Developer",  location: "Dallas, TX" },
+    { id: "udayja1",    name: "Uday Kumar",   role: "Front End Developer",        location: "Atlanta, GA" },
+    { id: "shasheeja1", name: "Shashi Kumar", role: "DevOps Engineer",            location: "Remote" },
+    { id: "rajja1",     name: "Raja Vamshi",  role: "Java Full Stack Developer",  location: "Remote" },
+    { id: "dunteesja1", name: "Dunteesh",     role: "Python Developer",           location: "Remote" },
+    { id: "purvaja1",   name: "Purva",        role: "Technical Writer",           location: "Remote" },
+    { id: "ramanaja1",  name: "Ramana",       role: "React Developer",            location: "Remote" },
+  ];
+
+  // Search Dice for jobs without logging in (public search)
+  const results: Record<string, { found: number; error?: string }> = {};
+
+  for (const agent of AGENTS) {
+    try {
+      const search = encodeURIComponent(agent.role);
+      const loc = encodeURIComponent(agent.location);
+      const url = `https://www.dice.com/jobs?q=${search}&location=${loc}&filters.employmentType=CONTRACTS&page=1&pageSize=20`;
+      
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)" }
+      });
+      const html = await resp.text();
+      
+      // Extract job data from page
+      const jobMatches = html.match(/"jobId":"([^"]+)","title":"([^"]+)","companyPageUri":"([^"]+)","company":"([^"]+)"/g) || [];
+      
+      let inserted = 0;
+      for (const match of jobMatches.slice(0, 15)) {
+        const m = match.match(/"jobId":"([^"]+)","title":"([^"]+)","companyPageUri":"([^"]+)","company":"([^"]+)"/);
+        if (!m) continue;
+        const [, jobId, title, , company] = m;
+        const jobUrl = `https://www.dice.com/job-detail/${jobId}`;
+        
+        try {
+          await pool.query(`
+            INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent)
+            VALUES ($1, $2, $3, $4, 'Dice', 'New', $5)
+            ON CONFLICT (job_url, agent) DO NOTHING
+          `, [title, company, agent.location, jobUrl, agent.id]);
+          inserted++;
+        } catch {}
+      }
+      
+      // Also update agent_runs
+      await pool.query(`
+        INSERT INTO agent_runs (agent, run_date, jobs_found, sources_searched, status, completed_at)
+        VALUES ($1, CURRENT_DATE, $2, 'Dice', 'completed', NOW())
+        ON CONFLICT (agent, run_date) DO UPDATE SET jobs_found=$2, status='completed', completed_at=NOW()
+      `, [agent.id, inserted]);
+      
+      results[agent.id] = { found: inserted };
+    } catch (err: any) {
+      results[agent.id] = { found: 0, error: err.message };
+    }
+  }
+
+  // Send Telegram summary
+  const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const lines = [`📊 *Agent Run — ${today}*\n`];
+  let total = 0;
+  for (const agent of AGENTS) {
+    const r = results[agent.id];
+    const icon = r?.error ? "❌" : "✅";
+    lines.push(`${icon} ${agent.id} (${agent.name}): ${r?.found || 0} new jobs found`);
+    total += r?.found || 0;
+  }
+  lines.push(`\n📌 *Total: ${total} new jobs added*`);
+  lines.push(`🔗 https://balaji-agent-hub-19615734221.us-east1.run.app`);
+
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT, text: lines.join("\n"), parse_mode: "Markdown" }),
+    });
+  } catch {}
+
+  await pool.end();
+  return results;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -204,6 +296,43 @@ export async function registerRoutes(
       return res.status(404).json({ message: "Mapping not found" });
     }
     res.json({ message: "Mapping deleted" });
+  });
+
+  // ========== AGENT RUNNER ROUTES ==========
+
+  // In-memory run status tracker
+  const runStatus: {
+    running: boolean;
+    startedAt: string | null;
+    lastRun: string | null;
+    lastResults: any | null;
+  } = { running: false, startedAt: null, lastRun: null, lastResults: null };
+
+  // GET /api/agents/run-status — get current run status
+  app.get("/api/agents/run-status", requireAuth, (_req: Request, res: Response) => {
+    res.json(runStatus);
+  });
+
+  // POST /api/agents/run-now — admin only, triggers agent run
+  app.post("/api/agents/run-now", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    if (runStatus.running) {
+      return res.status(409).json({ message: "Agents are already running. Please wait." });
+    }
+
+    runStatus.running = true;
+    runStatus.startedAt = new Date().toISOString();
+    res.json({ message: "Agent run started", startedAt: runStatus.startedAt });
+
+    // Run agents in background (non-blocking)
+    runAgentsInBackground().then((results) => {
+      runStatus.running = false;
+      runStatus.lastRun = new Date().toISOString();
+      runStatus.lastResults = results;
+    }).catch((err) => {
+      runStatus.running = false;
+      runStatus.lastRun = new Date().toISOString();
+      runStatus.lastResults = { error: err.message };
+    });
   });
 
   return httpServer;
