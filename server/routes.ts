@@ -126,6 +126,54 @@ async function runAgentsInBackground() {
   return results;
 }
 
+const scheduleConfig = {
+  enabled: true,
+  time: "06:00", // 6 AM ET
+  nextRun: "",
+  lastRun: "",
+};
+
+// In-memory run status for the auto-scheduler (shared with route handler below)
+let autoSchedulerRunStatus: {
+  running: boolean;
+  startedAt: string | null;
+  lastRun: string | null;
+  lastResults: any | null;
+} | null = null;
+
+// Auto-scheduler — checks every minute if it's time to run
+setInterval(async () => {
+  if (!scheduleConfig.enabled) return;
+  // We'll get the runStatus reference from the route handler
+  if (autoSchedulerRunStatus && autoSchedulerRunStatus.running) return;
+
+  const now = new Date();
+  const etTime = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const [schedHour, schedMin] = scheduleConfig.time.split(":").map(Number);
+
+  if (etTime.getHours() === schedHour && etTime.getMinutes() === schedMin) {
+    console.log("Auto-scheduler: triggering agent run...");
+    scheduleConfig.lastRun = new Date().toISOString();
+    if (autoSchedulerRunStatus) {
+      autoSchedulerRunStatus.running = true;
+      autoSchedulerRunStatus.startedAt = new Date().toISOString();
+    }
+    runAgentsInBackground()
+      .then((results) => {
+        if (autoSchedulerRunStatus) {
+          autoSchedulerRunStatus.running = false;
+          autoSchedulerRunStatus.lastRun = new Date().toISOString();
+          autoSchedulerRunStatus.lastResults = results;
+        }
+      })
+      .catch(() => {
+        if (autoSchedulerRunStatus) {
+          autoSchedulerRunStatus.running = false;
+        }
+      });
+  }
+}, 60000); // check every minute
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -316,6 +364,9 @@ export async function registerRoutes(
     lastResults: any | null;
   } = { running: false, startedAt: null, lastRun: null, lastResults: null };
 
+  // Wire up auto-scheduler to share the same runStatus
+  autoSchedulerRunStatus = runStatus;
+
   // GET /api/agents/run-status — get current run status
   app.get("/api/agents/run-status", requireAuth, (_req: Request, res: Response) => {
     res.json(runStatus);
@@ -409,6 +460,34 @@ export async function registerRoutes(
       await pool.end();
       res.status(500).json({ message: err.message });
     }
+  });
+
+  // ========== SCHEDULER ROUTES ==========
+
+  // Get scheduler config
+  app.get("/api/admin/schedule", requireAuth, requireAdmin, (_req: Request, res: Response) => {
+    res.json({
+      enabled: scheduleConfig.enabled,
+      time: scheduleConfig.time,
+      nextRun: scheduleConfig.nextRun,
+      lastRun: scheduleConfig.lastRun,
+    });
+  });
+
+  // Update scheduler config
+  app.post("/api/admin/schedule", requireAuth, requireAdmin, (req: Request, res: Response) => {
+    const { enabled, time } = req.body;
+    scheduleConfig.enabled = enabled ?? scheduleConfig.enabled;
+    scheduleConfig.time = time ?? scheduleConfig.time;
+
+    // Calculate next run
+    const [hours, minutes] = scheduleConfig.time.split(":").map(Number);
+    const next = new Date();
+    next.setHours(hours, minutes, 0, 0);
+    if (next <= new Date()) next.setDate(next.getDate() + 1);
+    scheduleConfig.nextRun = next.toISOString();
+
+    res.json(scheduleConfig);
   });
 
   return httpServer;
