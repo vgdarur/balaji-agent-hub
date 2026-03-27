@@ -45,80 +45,162 @@ async function runAgentsInBackground() {
   const TELEGRAM_CHAT = "-1003828540142";
 
   const AGENTS = [
-    { id: "krishnaja1", name: "V Krishna",   role: "Java Full Stack Developer",  location: "Dallas, TX" },
-    { id: "udayja1",    name: "Uday Kumar",   role: "Front End Developer",        location: "Atlanta, GA" },
-    { id: "shasheeja1", name: "Shashi Kumar", role: "DevOps Engineer",            location: "Remote" },
-    { id: "rajja1",     name: "Raja Vamshi",  role: "Java Full Stack Developer",  location: "Remote" },
-    { id: "dunteesja1", name: "Dunteesh",     role: "Python Developer",           location: "Remote" },
-    { id: "purvaja1",   name: "Purva",        role: "Technical Writer",           location: "Remote" },
-    { id: "ramanaja1",  name: "Ramana",       role: "React Developer",            location: "Remote" },
+    { id: "venuja1",    name: "Venu Gopal",   searches: ["Software Engineering Manager", "Senior Engineering Manager"] },
+    { id: "krishnaja1", name: "V Krishna",    searches: ["Java Full Stack Developer", "Java Developer"] },
+    { id: "udayja1",    name: "Uday Kumar",   searches: ["Front End Developer", "React Developer", "Angular Developer"] },
+    { id: "shasheeja1", name: "Shashi Kumar", searches: ["DevOps Engineer", "Cloud Engineer", "SRE Engineer"] },
+    { id: "rajja1",     name: "Raja Vamshi",  searches: ["Java Developer", "Software Engineer", "Full Stack Developer", "Python Developer"] },
+    { id: "dunteesja1", name: "Dunteesh",     searches: ["Python Developer", "Python Engineer"] },
+    { id: "purvaja1",   name: "Purva",        searches: ["Technical Writer", "Documentation Specialist"] },
+    { id: "ramanaja1",  name: "Ramana",       searches: ["React Developer", "React Engineer", "Frontend Developer"] },
   ];
 
-  // Search Dice for jobs without logging in (public search)
-  const results: Record<string, { found: number; error?: string }> = {};
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  const results: Record<string, { dice: number; linkedin: number; indeed: number; careerbuilder: number; ziprecruiter: number; monster: number; total: number }> = {};
 
   for (const agent of AGENTS) {
-    try {
-      const search = encodeURIComponent(agent.role);
-      const loc = encodeURIComponent(agent.location);
-      const url = `https://www.dice.com/jobs?q=${search}&location=${loc}&filters.employmentType=CONTRACTS&page=1&pageSize=20`;
-      
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)" }
-      });
-      const html = await resp.text();
-      
-      // Extract job data from page
-      const jobMatches = html.match(/"jobId":"([^"]+)","title":"([^"]+)","companyPageUri":"([^"]+)","company":"([^"]+)"/g) || [];
-      
-      let inserted = 0;
-      for (const match of jobMatches.slice(0, 15)) {
-        const m = match.match(/"jobId":"([^"]+)","title":"([^"]+)","companyPageUri":"([^"]+)","company":"([^"]+)"/);
-        if (!m) continue;
-        const [, jobId, title, , company] = m;
-        const jobUrl = `https://www.dice.com/job-detail/${jobId}`;
-        
-        try {
-          await pool.query(`
-            INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent)
-            VALUES ($1, $2, $3, $4, 'Dice', 'New', $5)
-            ON CONFLICT (job_url, agent) DO NOTHING
-          `, [title, company, agent.location, jobUrl, agent.id]);
-          inserted++;
-        } catch {}
-      }
-      
-      // Also update agent_runs
-      await pool.query(`
-        INSERT INTO agent_runs (agent, run_date, jobs_found, sources_searched, status, completed_at)
-        VALUES ($1, CURRENT_DATE, $2, 'Dice', 'completed', NOW())
-        ON CONFLICT (agent, run_date) DO UPDATE SET jobs_found=$2, status='completed', completed_at=NOW()
-      `, [agent.id, inserted]);
-      
-      results[agent.id] = { found: inserted };
-    } catch (err: any) {
-      results[agent.id] = { found: 0, error: err.message };
+    results[agent.id] = { dice: 0, linkedin: 0, indeed: 0, careerbuilder: 0, ziprecruiter: 0, monster: 0, total: 0 };
+
+    for (const searchTerm of agent.searches) {
+      const encoded = encodeURIComponent(searchTerm);
+
+      // 1. DICE — public search
+      try {
+        const diceUrl = `https://www.dice.com/jobs?q=${encoded}&filters.employmentType=CONTRACTS&filters.workplaceTypes=Remote&page=1&pageSize=20`;
+        const resp = await fetch(diceUrl, { headers: { "User-Agent": UA } });
+        const html = await resp.text();
+        const idMatches = html.match(/job-detail\/([a-f0-9-]{36})/g) || [];
+        const titleMatches = html.match(/"jobTitle"\s*:\s*"([^"]+)"/g) || [];
+        const companyMatches = html.match(/"companyName"\s*:\s*"([^"]+)"/g) || [];
+        const uniqueIds = [...new Set(idMatches.map((m: string) => m.replace("job-detail/", "")))].slice(0, 10);
+        for (let i = 0; i < uniqueIds.length; i++) {
+          const jobUrl = `https://www.dice.com/job-detail/${uniqueIds[i]}`;
+          const title = titleMatches[i] ? titleMatches[i].replace(/"jobTitle"\s*:\s*"/, "").replace(/"$/, "") : searchTerm;
+          const company = companyMatches[i] ? companyMatches[i].replace(/"companyName"\s*:\s*"/, "").replace(/"$/, "") : "Via Dice";
+          try {
+            const res = await pool.query(
+              `INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent) VALUES ($1, $2, 'Remote', $3, 'Dice', 'New', $4) ON CONFLICT (job_url, agent) DO NOTHING`,
+              [title, company, jobUrl, agent.id]
+            );
+            if (res.rowCount && res.rowCount > 0) results[agent.id].dice++;
+          } catch {}
+        }
+      } catch {}
+
+      // 2. LINKEDIN — public guest job search API
+      try {
+        const liUrl = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=${encoded}&f_JT=C&f_WT=2&start=0`;
+        const resp = await fetch(liUrl, { headers: { "User-Agent": UA } });
+        const html = await resp.text();
+        const jobIds = html.match(/data-entity-urn="urn:li:jobPosting:(\d+)"/g) || [];
+        const titles = html.match(/<h3[^>]*class="[^"]*base-search-card__title[^"]*"[^>]*>([^<]+)<\/h3>/g) || [];
+        const companies = html.match(/<h4[^>]*class="[^"]*base-search-card__subtitle[^"]*"[^>]*>([^<]+)<\/h4>/g) || [];
+        for (let i = 0; i < Math.min(jobIds.length, 5); i++) {
+          const id = jobIds[i].replace(/.*:(\d+)"/, "$1");
+          const jobUrl = `https://www.linkedin.com/jobs/view/${id}`;
+          const title = titles[i] ? titles[i].replace(/<[^>]+>/g, "").trim() : searchTerm;
+          const company = companies[i] ? companies[i].replace(/<[^>]+>/g, "").trim() : "Via LinkedIn";
+          try {
+            const res = await pool.query(
+              `INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent) VALUES ($1, $2, 'Remote', $3, 'LinkedIn', 'New', $4) ON CONFLICT (job_url, agent) DO NOTHING`,
+              [title, company, jobUrl, agent.id]
+            );
+            if (res.rowCount && res.rowCount > 0) results[agent.id].linkedin++;
+          } catch {}
+        }
+      } catch {}
+
+      // 3. ZIPRECRUITER — public search
+      try {
+        const zipUrl = `https://api.ziprecruiter.com/jobs/search?search=${encoded}&location=Remote&radius_miles=25&days_ago=3&jobs_per_page=10&page=1`;
+        const resp = await fetch(zipUrl, { headers: { "User-Agent": UA } });
+        if (resp.ok) {
+          const data = await resp.json() as any;
+          const jobs = data.jobs || [];
+          for (const job of jobs.slice(0, 5)) {
+            try {
+              const res = await pool.query(
+                `INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent) VALUES ($1, $2, $3, $4, 'ZipRecruiter', 'New', $5) ON CONFLICT (job_url, agent) DO NOTHING`,
+                [job.name || searchTerm, job.hiring_company?.name || "Via ZipRecruiter", job.location || "Remote", job.url || "https://www.ziprecruiter.com", agent.id]
+              );
+              if (res.rowCount && res.rowCount > 0) results[agent.id].ziprecruiter++;
+            } catch {}
+          }
+        }
+      } catch {}
+
+      // 4. CAREERBUILDER — public search
+      try {
+        const cbUrl = `https://www.careerbuilder.com/jobs?keywords=${encoded}&location=Remote&emp=jtc2`;
+        const resp = await fetch(cbUrl, { headers: { "User-Agent": UA } });
+        const html = await resp.text();
+        const cbPaths = html.match(/\/job-details\/[a-zA-Z0-9_-]+/g) || [];
+        const cbTitles = html.match(/class="[^"]*job-title[^"]*"[^>]*>([^<]+)</g) || [];
+        const uniqueCb = [...new Set(cbPaths)].slice(0, 5);
+        for (let i = 0; i < uniqueCb.length; i++) {
+          const jobUrl = `https://www.careerbuilder.com${uniqueCb[i]}`;
+          const title = cbTitles[i] ? cbTitles[i].replace(/class="[^"]*"[^>]*>/, "").replace("<", "").trim() : searchTerm;
+          try {
+            const res = await pool.query(
+              `INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent) VALUES ($1, 'Via CareerBuilder', 'Remote', $2, 'CareerBuilder', 'New', $3) ON CONFLICT (job_url, agent) DO NOTHING`,
+              [title, jobUrl, agent.id]
+            );
+            if (res.rowCount && res.rowCount > 0) results[agent.id].careerbuilder++;
+          } catch {}
+        }
+      } catch {}
+
+      // 5. MONSTER — public search
+      try {
+        const monsterUrl = `https://www.monster.com/jobs/search?q=${encoded}&where=Remote&tm=3&jt=contract`;
+        const resp = await fetch(monsterUrl, { headers: { "User-Agent": UA } });
+        const html = await resp.text();
+        const monsterPaths = html.match(/\/job-openings\/[^"?]+/g) || [];
+        const uniqueMonster = [...new Set(monsterPaths)].slice(0, 5);
+        for (const path of uniqueMonster) {
+          try {
+            const res = await pool.query(
+              `INSERT INTO hub_jobs (title, company, location, job_url, source, status, agent) VALUES ($1, 'Via Monster', 'Remote', $2, 'Monster', 'New', $3) ON CONFLICT (job_url, agent) DO NOTHING`,
+              [searchTerm, `https://www.monster.com${path}`, agent.id]
+            );
+            if (res.rowCount && res.rowCount > 0) results[agent.id].monster++;
+          } catch {}
+        }
+      } catch {}
     }
+
+    results[agent.id].total = results[agent.id].dice + results[agent.id].linkedin +
+      results[agent.id].indeed + results[agent.id].careerbuilder +
+      results[agent.id].ziprecruiter + results[agent.id].monster;
+
+    // Update agent_runs
+    try {
+      await pool.query(
+        `INSERT INTO agent_runs (agent, run_date, jobs_found, sources_searched, status, completed_at)
+         VALUES ($1, CURRENT_DATE, $2, 'Dice,LinkedIn,CareerBuilder,ZipRecruiter,Monster', 'completed', NOW())
+         ON CONFLICT (agent, run_date) DO UPDATE SET jobs_found=$2, status='completed', completed_at=NOW()`,
+        [agent.id, results[agent.id].total]
+      );
+    } catch {}
   }
 
-  // Send Telegram summary
+  // Telegram report
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-  const lines = [`📊 *Agent Run — ${today}*\n`];
-  let total = 0;
+  const lines = [`Daily Multi-Board Report - ${today}\n`];
+  let grandTotal = 0;
   for (const agent of AGENTS) {
     const r = results[agent.id];
-    const icon = r?.error ? "❌" : "✅";
-    lines.push(`${icon} ${agent.id} (${agent.name}): ${r?.found || 0} new jobs found`);
-    total += r?.found || 0;
+    lines.push(`${agent.name}: ${r.total} new (Dice:${r.dice} LI:${r.linkedin} CB:${r.careerbuilder} ZIP:${r.ziprecruiter} MON:${r.monster})`);
+    grandTotal += r.total;
   }
-  lines.push(`\n📌 *Total: ${total} new jobs added*`);
-  lines.push(`🔗 https://balaji-agent-hub-19615734221.us-east1.run.app`);
+  lines.push(`\nTotal new jobs: ${grandTotal}`);
+  lines.push(`Dashboard: https://balaji-agent-hub-19615734221.us-east1.run.app`);
 
   try {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT, text: lines.join("\n"), parse_mode: "Markdown" }),
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT, text: lines.join("\n") }),
     });
   } catch {}
 

@@ -30,13 +30,15 @@ interface ScheduleConfig {
   lastRun: string;
 }
 
-const BOARDS = ["Dice", "LinkedIn", "Indeed", "CareerBuilder"] as const;
+const BOARDS = ["Dice", "LinkedIn", "Indeed", "CareerBuilder", "ZipRecruiter", "Monster"];
 
 const BOARD_CONFIG: Record<string, { color: string; light: string; border: string; text: string }> = {
-  Dice:          { color: "bg-orange-500", light: "bg-orange-50",  border: "border-orange-200", text: "text-orange-700" },
-  LinkedIn:      { color: "bg-blue-600",   light: "bg-blue-50",    border: "border-blue-200",   text: "text-blue-700" },
-  Indeed:        { color: "bg-purple-600", light: "bg-purple-50",  border: "border-purple-200", text: "text-purple-700" },
-  CareerBuilder: { color: "bg-green-600",  light: "bg-green-50",   border: "border-green-200",  text: "text-green-700" },
+  Dice:          { color: "bg-orange-500",  light: "bg-orange-50",  border: "border-orange-200",  text: "text-orange-700" },
+  LinkedIn:      { color: "bg-blue-600",    light: "bg-blue-50",    border: "border-blue-200",    text: "text-blue-700" },
+  Indeed:        { color: "bg-purple-600",  light: "bg-purple-50",  border: "border-purple-200",  text: "text-purple-700" },
+  CareerBuilder: { color: "bg-green-600",   light: "bg-green-50",   border: "border-green-200",   text: "text-green-700" },
+  ZipRecruiter:  { color: "bg-yellow-500",  light: "bg-yellow-50",  border: "border-yellow-200",  text: "text-yellow-700" },
+  Monster:       { color: "bg-violet-600",  light: "bg-violet-50",  border: "border-violet-200",  text: "text-violet-700" },
 };
 
 const STATUS_COLORS: Record<string, string> = {
