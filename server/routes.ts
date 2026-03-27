@@ -462,6 +462,122 @@ export async function registerRoutes(
     }
   });
 
+  // ========== AGENT CONFIG ROUTES ==========
+
+  // GET /api/admin/agents — list all agent configs
+  app.get("/api/admin/agents", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    const pool = new (require("pg").Pool)({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS agent_config (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          role TEXT NOT NULL,
+          location TEXT NOT NULL,
+          dice_email TEXT,
+          dice_password TEXT,
+          color TEXT DEFAULT 'hsl(200, 80%, 50%)',
+          search_term TEXT,
+          active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT NOW()
+        )
+      `);
+      // Seed from default agents if table is empty
+      const existing = await pool.query("SELECT COUNT(*) FROM agent_config");
+      if (parseInt(existing.rows[0].count) === 0) {
+        const defaultAgents = [
+          { id: "krishnaja1", name: "V Krishna", role: "C2C Java Fullstack", location: "Dallas/Remote", color: "hsl(262, 72%, 56%)", search_term: "Java Full Stack Developer" },
+          { id: "udayja1", name: "Uday Kumar", role: "C2C Front-End Dev", location: "Atlanta/Remote", color: "hsl(38, 92%, 50%)", search_term: "Front End Developer" },
+          { id: "shasheeja1", name: "Shashi Kumar", role: "C2C DevOps/SRE", location: "Remote", color: "hsl(340, 75%, 55%)", search_term: "DevOps Engineer" },
+          { id: "rajja1", name: "Raja Vamshi", role: "C2C Java Fullstack", location: "Remote", color: "hsl(200, 80%, 50%)", search_term: "Java Full Stack Developer" },
+          { id: "dunteesja1", name: "Dunteesh", role: "C2C Python Dev", location: "Remote", color: "hsl(25, 90%, 55%)", search_term: "Python Developer" },
+          { id: "purvaja1", name: "Purva", role: "C2C Technical Writer", location: "Remote", color: "hsl(290, 70%, 55%)", search_term: "Technical Writer" },
+          { id: "ramanaja1", name: "Ramana", role: "C2C React Dev", location: "Remote", color: "hsl(150, 70%, 45%)", search_term: "React Developer" },
+        ];
+        for (const a of defaultAgents) {
+          await pool.query(
+            "INSERT INTO agent_config (id, name, role, location, color, search_term) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+            [a.id, a.name, a.role, a.location, a.color, a.search_term]
+          );
+        }
+      }
+      const result = await pool.query(
+        "SELECT id, name, role, location, dice_email, color, search_term, active FROM agent_config ORDER BY created_at"
+      );
+      await pool.end();
+      res.json(result.rows);
+    } catch (err: any) {
+      await pool.end();
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/agents — add new agent
+  app.post("/api/admin/agents", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    const pool = new (require("pg").Pool)({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    const { id, name, role, location, dice_email, dice_password, color, search_term } = req.body;
+    try {
+      await pool.query(
+        "INSERT INTO agent_config (id, name, role, location, dice_email, dice_password, color, search_term) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [id, name, role, location, dice_email || null, dice_password || null, color || "hsl(200, 80%, 50%)", search_term || null]
+      );
+      await pool.end();
+      res.json({ message: "Agent added" });
+    } catch (err: any) {
+      await pool.end();
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // PUT /api/admin/agents/:id — update agent
+  app.put("/api/admin/agents/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    const pool = new (require("pg").Pool)({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    const { name, role, location, dice_email, dice_password, color, search_term } = req.body;
+    try {
+      if (dice_password) {
+        await pool.query(
+          "UPDATE agent_config SET name=$1, role=$2, location=$3, dice_email=$4, dice_password=$5, color=$6, search_term=$7 WHERE id=$8",
+          [name, role, location, dice_email || null, dice_password, color, search_term || null, req.params.id]
+        );
+      } else {
+        await pool.query(
+          "UPDATE agent_config SET name=$1, role=$2, location=$3, dice_email=$4, color=$5, search_term=$6 WHERE id=$7",
+          [name, role, location, dice_email || null, color, search_term || null, req.params.id]
+        );
+      }
+      await pool.end();
+      res.json({ message: "Agent updated" });
+    } catch (err: any) {
+      await pool.end();
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // DELETE /api/admin/agents/:id — remove agent
+  app.delete("/api/admin/agents/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    const pool = new (require("pg").Pool)({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    try {
+      await pool.query("DELETE FROM agent_config WHERE id = $1", [req.params.id]);
+      await pool.end();
+      res.json({ message: "Agent removed" });
+    } catch (err: any) {
+      await pool.end();
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ========== SCHEDULER ROUTES ==========
 
   // Get scheduler config
