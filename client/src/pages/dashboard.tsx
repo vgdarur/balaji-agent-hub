@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -7,18 +7,14 @@ import type { HubJob } from "@shared/schema";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Briefcase,
-  CheckCircle,
   Clock,
   Users,
-  Award,
   ExternalLink,
   LogOut,
   Shield,
   Play,
   Loader2,
   BarChart2,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -34,15 +30,24 @@ interface ScheduleConfig {
   lastRun: string;
 }
 
-const COLUMN_CONFIG: Record<string, { bg: string; light: string; border: string; text: string; dot: string }> = {
-  New:       { bg: "bg-blue-500",    light: "bg-blue-50",    border: "border-blue-200",    text: "text-blue-700",    dot: "bg-blue-500" },
-  Applied:   { bg: "bg-emerald-500", light: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700", dot: "bg-emerald-500" },
-  Interview: { bg: "bg-amber-500",   light: "bg-amber-50",   border: "border-amber-200",   text: "text-amber-700",   dot: "bg-amber-500" },
-  Offer:     { bg: "bg-purple-500",  light: "bg-purple-50",  border: "border-purple-200",  text: "text-purple-700",  dot: "bg-purple-500" },
-  Rejected:  { bg: "bg-red-500",     light: "bg-red-50",     border: "border-red-200",     text: "text-red-700",     dot: "bg-red-500" },
+const BOARDS = ["Dice", "LinkedIn", "Indeed", "CareerBuilder"] as const;
+
+const BOARD_CONFIG: Record<string, { color: string; light: string; border: string; text: string }> = {
+  Dice:          { color: "bg-orange-500", light: "bg-orange-50",  border: "border-orange-200", text: "text-orange-700" },
+  LinkedIn:      { color: "bg-blue-600",   light: "bg-blue-50",    border: "border-blue-200",   text: "text-blue-700" },
+  Indeed:        { color: "bg-purple-600", light: "bg-purple-50",  border: "border-purple-200", text: "text-purple-700" },
+  CareerBuilder: { color: "bg-green-600",  light: "bg-green-50",   border: "border-green-200",  text: "text-green-700" },
 };
 
-const KANBAN_STATUSES = ["New", "Applied", "Interview", "Offer", "Rejected"];
+const STATUS_COLORS: Record<string, string> = {
+  New:       "bg-blue-100 text-blue-700",
+  Applied:   "bg-emerald-100 text-emerald-700",
+  Interview: "bg-amber-100 text-amber-700",
+  Offer:     "bg-purple-100 text-purple-700",
+  Rejected:  "bg-red-100 text-red-700",
+  Pending:   "bg-gray-100 text-gray-600",
+  Skipped:   "bg-gray-100 text-gray-400",
+};
 
 const AGENT_DOT_COLORS: Record<string, string> = {
   venuja1: "bg-teal-500",
@@ -53,13 +58,6 @@ const AGENT_DOT_COLORS: Record<string, string> = {
   dunteesja1: "bg-orange-500",
   purvaja1: "bg-violet-500",
   ramanaja1: "bg-green-500",
-};
-
-const SOURCE_STYLES: Record<string, string> = {
-  Dice: "bg-orange-100 text-orange-700",
-  LinkedIn: "bg-blue-100 text-blue-700",
-  Indeed: "bg-purple-100 text-purple-700",
-  CareerBuilder: "bg-green-100 text-green-700",
 };
 
 function formatNextRun(d: string) {
@@ -78,10 +76,9 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
   const { user, isAdmin, agents: userAgents, logout } = useAuth();
   const [, setLocation] = useLocation();
   const [selectedAgent, setSelectedAgent] = useState<string>("all");
-  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [running, setRunning] = useState(false);
   const [schedule, setSchedule] = useState<ScheduleConfig | null>(null);
-  const [showAllColumns, setShowAllColumns] = useState(false);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -105,12 +102,12 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
     }, 30000);
   };
 
+  // Fetch ALL jobs (no source filter at API level — we filter client-side for accurate counts)
   const { data, isLoading } = useQuery<JobsResponse>({
-    queryKey: ["/api/jobs", selectedAgent, "all", sourceFilter],
+    queryKey: ["/api/jobs", selectedAgent],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedAgent !== "all") params.set("agent", selectedAgent);
-      if (sourceFilter !== "all") params.set("source", sourceFilter);
       const res = await apiRequest("GET", `/api/jobs?${params.toString()}`);
       return res.json();
     },
@@ -125,30 +122,37 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
     },
   });
 
-  const jobs = data?.jobs || [];
-  const stats = data?.stats || { total: 0, Applied: 0, Interview: 0, Pending: 0, Offer: 0, New: 0 };
+  const allJobs = data?.jobs || [];
   const showAgentOnCard = selectedAgent === "all" && userAgents.length > 1;
 
-  // Group jobs by status
-  const jobsByStatus: Record<string, HubJob[]> = {};
-  for (const s of KANBAN_STATUSES) {
-    jobsByStatus[s] = [];
-  }
-  for (const job of jobs) {
-    const normalized = job.status.charAt(0).toUpperCase() + job.status.slice(1).toLowerCase();
-    if (jobsByStatus[normalized]) {
-      jobsByStatus[normalized].push(job);
+  // Client-side filtering — single source of truth for counts and cards
+  const visibleJobs = useMemo(() => {
+    let result = allJobs;
+    if (statusFilter !== "all") {
+      result = result.filter((j) => j.status === statusFilter);
     }
-  }
+    return result;
+  }, [allJobs, statusFilter]);
 
-  // Filter columns: only show non-empty unless showAllColumns is on
-  const visibleColumns = showAllColumns
-    ? KANBAN_STATUSES
-    : KANBAN_STATUSES.filter((s) => (jobsByStatus[s]?.length || 0) > 0);
+  // Group by board (source), hide empty boards
+  const boardGroups = useMemo(() => {
+    return BOARDS.map((board) => ({
+      board,
+      jobs: visibleJobs.filter((j) => j.source === board),
+    })).filter((g) => g.jobs.length > 0);
+  }, [visibleJobs]);
+
+  // Stats from the SAME visible array
+  const stats = useMemo(() => ({
+    total: visibleJobs.length,
+    applied: visibleJobs.filter((j) => j.status === "Applied").length,
+    interviews: visibleJobs.filter((j) => j.status === "Interview").length,
+    offers: visibleJobs.filter((j) => j.status === "Offer").length,
+  }), [visibleJobs]);
 
   const title =
     selectedAgent === "all"
-      ? "All Jobs"
+      ? "All Candidates"
       : `${allAgents.find((a) => a.id === selectedAgent)?.name || ""}'s Jobs`;
 
   return (
@@ -245,64 +249,60 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 flex flex-col overflow-hidden">
         {/* Schedule banner */}
         {isAdmin && schedule?.enabled && schedule.nextRun && (
-          <div className="bg-teal-50 border-b border-teal-200 px-6 py-2 text-xs text-teal-700 flex items-center gap-2">
+          <div className="bg-teal-50 border-b border-teal-200 px-6 py-2 text-xs text-teal-700 flex items-center gap-2 flex-shrink-0">
             <Clock className="w-3.5 h-3.5" />
             Next agent run: <span className="font-semibold">{formatNextRun(schedule.nextRun)}</span>
           </div>
         )}
 
         {/* Header */}
-        <div className="bg-white shadow-sm border-b border-gray-100 px-6 py-4">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h1 className="text-xl font-bold text-gray-900" data-testid="text-dashboard-title">
+        <header className="bg-white border-b border-gray-100 shadow-sm px-6 py-3 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4 flex-wrap">
+              <h2 className="text-base font-bold text-gray-900" data-testid="text-dashboard-title">
                 {title}
-              </h1>
-              <p className="text-sm text-gray-500 mt-0.5">
-                {selectedAgent === "all"
-                  ? "Overview of all agent job tracking"
-                  : allAgents.find((a) => a.id === selectedAgent)?.role || ""}
-              </p>
+              </h2>
+              {/* KPI pills — computed from the SAME visible array */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="bg-gray-100 text-gray-700 text-xs font-bold px-3 py-1 rounded-full">
+                  {stats.total} Total
+                </span>
+                <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full">
+                  {stats.applied} Applied
+                </span>
+                {stats.interviews > 0 && (
+                  <span className="bg-amber-100 text-amber-700 text-xs font-bold px-3 py-1 rounded-full">
+                    {stats.interviews} Interviews
+                  </span>
+                )}
+                {stats.offers > 0 && (
+                  <span className="bg-purple-100 text-purple-700 text-xs font-bold px-3 py-1 rounded-full">
+                    {stats.offers} Offers
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              {/* Source filter */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Status filter */}
               <select
-                value={sourceFilter}
-                onChange={(e) => setSourceFilter(e.target.value)}
-                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
-                data-testid="select-source-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-gray-50 text-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-400"
               >
-                <option value="all">All Sources</option>
-                <option value="Dice">Dice</option>
-                <option value="LinkedIn">LinkedIn</option>
-                <option value="Indeed">Indeed</option>
-                <option value="CareerBuilder">CareerBuilder</option>
+                <option value="all">All Statuses</option>
+                {JOB_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
               </select>
-
-              {/* Show all columns toggle */}
-              {isAdmin && (
-                <button
-                  onClick={() => setShowAllColumns(!showAllColumns)}
-                  className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                    showAllColumns
-                      ? "bg-gray-100 border-gray-300 text-gray-700"
-                      : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
-                  }`}
-                  title={showAllColumns ? "Hide empty columns" : "Show all columns"}
-                >
-                  {showAllColumns ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  {showAllColumns ? "Hide Empty" : "Show All"}
-                </button>
-              )}
-
+              {/* Run agents */}
               {isAdmin && (
                 <button
                   onClick={handleRunNow}
                   disabled={running}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-500 text-white text-xs font-bold hover:bg-teal-600 disabled:opacity-50 transition-colors"
                 >
                   {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                   {running ? "Running..." : "Run Agents Now"}
@@ -310,71 +310,40 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
               )}
             </div>
           </div>
+        </header>
 
-          {/* KPI pills */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-3 py-1">
-              <Briefcase className="w-3.5 h-3.5 text-gray-500" />
-              <span className="text-xs text-gray-500">Total</span>
-              <span className="text-sm font-bold text-gray-900">{stats.total}</span>
-            </div>
-            <div className="flex items-center gap-1.5 bg-emerald-50 rounded-full px-3 py-1">
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="text-xs text-emerald-600">Applied</span>
-              <span className="text-sm font-bold text-emerald-700">{stats.Applied || 0}</span>
-            </div>
-            <div className="flex items-center gap-1.5 bg-amber-50 rounded-full px-3 py-1">
-              <Users className="w-3.5 h-3.5 text-amber-600" />
-              <span className="text-xs text-amber-600">Interviews</span>
-              <span className="text-sm font-bold text-amber-700">{stats.Interview || 0}</span>
-            </div>
-            <div className="flex items-center gap-1.5 bg-purple-50 rounded-full px-3 py-1">
-              <Award className="w-3.5 h-3.5 text-purple-600" />
-              <span className="text-xs text-purple-600">Offers</span>
-              <span className="text-sm font-bold text-purple-700">{stats.Offer || 0}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Kanban Board */}
-        <div className="p-6">
+        {/* Kanban Board — columns = job boards */}
+        <div className="flex-1 overflow-x-auto overflow-y-hidden">
           {isLoading ? (
             <div className="text-center py-20 text-gray-400">Loading jobs...</div>
-          ) : visibleColumns.length === 0 ? (
+          ) : boardGroups.length === 0 ? (
             <div className="text-center py-20 text-gray-400">
               <Briefcase className="w-10 h-10 mx-auto mb-3 text-gray-300" />
               <p className="text-sm">No jobs found</p>
               <p className="text-xs mt-1">Try changing filters or run agents to fetch new jobs</p>
             </div>
           ) : (
-            <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: "60vh" }}>
-              {visibleColumns.map((status) => {
-                const colJobs = jobsByStatus[status] || [];
-                const config = COLUMN_CONFIG[status];
+            <div className="flex gap-4 p-4 h-full min-w-max">
+              {boardGroups.map(({ board, jobs: boardJobs }) => {
+                const config = BOARD_CONFIG[board];
                 return (
                   <div
-                    key={status}
-                    className="min-w-[280px] max-w-[320px] flex flex-col flex-1"
+                    key={board}
+                    className="flex flex-col w-72 bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
                   >
                     {/* Column header */}
-                    <div className={`${config.light} border ${config.border} rounded-t-xl px-4 py-3 flex items-center justify-between`}>
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2.5 h-2.5 rounded-full ${config.dot}`} />
-                        <span className={`text-sm font-bold uppercase tracking-wide ${config.text}`}>
-                          {status}
-                        </span>
-                      </div>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${config.bg} text-white`}>
-                        {colJobs.length}
+                    <div className={`${config.light} ${config.border} border-b px-4 py-3 flex items-center justify-between flex-shrink-0`}>
+                      <span className={`text-sm font-bold uppercase tracking-wide ${config.text}`}>
+                        {board}
+                      </span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full text-white ${config.color}`}>
+                        {boardJobs.length}
                       </span>
                     </div>
 
-                    {/* Column body */}
-                    <div
-                      className={`flex-1 bg-gray-50 border-x border-b ${config.border} rounded-b-xl p-2.5 space-y-2.5 overflow-y-auto`}
-                      style={{ maxHeight: "calc(100vh - 320px)" }}
-                    >
-                      {colJobs.map((job) => (
+                    {/* Cards */}
+                    <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50">
+                      {boardJobs.map((job) => (
                         <JobCard
                           key={job.id}
                           job={job}
@@ -392,7 +361,7 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
           )}
         </div>
 
-        <footer className="pb-4 text-center">
+        <footer className="pb-3 pt-1 text-center flex-shrink-0">
           <a
             href="https://www.perplexity.ai/computer"
             target="_blank"
@@ -418,40 +387,35 @@ function JobCard({
 }) {
   const agentDot = AGENT_DOT_COLORS[job.agent] || "bg-gray-400";
   const agentName = allAgents.find((a) => a.id === job.agent)?.name || job.agent;
-  const sourceBadge = SOURCE_STYLES[job.source] || "bg-gray-100 text-gray-600";
+  const statusStyle = STATUS_COLORS[job.status] || "bg-gray-100 text-gray-600";
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all p-4 cursor-pointer group">
-      {/* Top row: source badge + agent dot */}
-      <div className="flex items-center justify-between mb-2">
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sourceBadge}`}>
-          {job.source}
-        </span>
-        {showAgent && (
-          <div className="flex items-center gap-1">
-            <span className={`w-2.5 h-2.5 rounded-full ${agentDot}`} />
-            <span className="text-[10px] text-gray-400">{agentName}</span>
-          </div>
-        )}
-      </div>
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all p-3 w-full">
+      {/* Agent dot + name */}
+      {showAgent && (
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${agentDot}`} />
+          <span className="text-[10px] text-gray-400 truncate">{agentName}</span>
+        </div>
+      )}
 
       {/* Job title */}
-      <h3 className="text-sm font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-teal-600 transition-colors">
+      <h3 className="text-sm font-semibold text-gray-900 mb-1 line-clamp-2 leading-tight">
         {job.title}
       </h3>
 
       {/* Company */}
-      <p className="text-xs text-gray-600 font-medium mb-0.5">{job.company}</p>
+      <p className="text-xs font-medium text-gray-600 mb-0.5">{job.company}</p>
 
       {/* Location */}
-      <p className="text-xs text-gray-400 mb-3">{job.location}</p>
+      <p className="text-[11px] text-gray-400 mb-3">{job.location}</p>
 
-      {/* Bottom: status dropdown + Apply button */}
+      {/* Status badge + Apply */}
       <div className="flex items-center justify-between gap-2">
         <select
           value={job.status}
           onChange={(e) => onStatusChange(e.target.value)}
-          className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-400 flex-1 min-w-0"
+          className={`text-[11px] font-semibold rounded-full px-2 py-0.5 border-0 focus:outline-none cursor-pointer appearance-none ${statusStyle}`}
           data-testid={`select-status-${job.id}`}
         >
           {JOB_STATUSES.map((s) => (
@@ -462,7 +426,7 @@ function JobCard({
           href={job.job_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-xs bg-teal-500 text-white px-3 py-1 rounded-lg hover:bg-teal-600 transition-colors font-medium flex items-center gap-1 whitespace-nowrap shadow-sm"
+          className="text-[11px] bg-teal-500 text-white px-2.5 py-1 rounded-lg hover:bg-teal-600 font-semibold whitespace-nowrap flex items-center gap-1"
           data-testid={`button-apply-${job.id}`}
         >
           Apply <ExternalLink className="w-3 h-3" />
