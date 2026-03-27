@@ -4,13 +4,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { agents as allAgents, JOB_STATUSES } from "@shared/schema";
 import type { HubJob } from "@shared/schema";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Briefcase,
@@ -24,6 +17,8 @@ import {
   Play,
   Loader2,
   BarChart2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -39,13 +34,15 @@ interface ScheduleConfig {
   lastRun: string;
 }
 
-const KANBAN_COLUMNS = [
-  { status: "New", label: "NEW", headerBg: "bg-blue-50", headerBorder: "border-blue-200", headerText: "text-blue-700", dotBg: "bg-blue-500" },
-  { status: "Applied", label: "APPLIED", headerBg: "bg-green-50", headerBorder: "border-green-200", headerText: "text-green-700", dotBg: "bg-green-500" },
-  { status: "Interview", label: "INTERVIEW", headerBg: "bg-amber-50", headerBorder: "border-amber-200", headerText: "text-amber-700", dotBg: "bg-amber-500" },
-  { status: "Offer", label: "OFFER", headerBg: "bg-purple-50", headerBorder: "border-purple-200", headerText: "text-purple-700", dotBg: "bg-purple-500" },
-  { status: "Rejected", label: "REJECTED", headerBg: "bg-red-50", headerBorder: "border-red-200", headerText: "text-red-700", dotBg: "bg-red-500" },
-] as const;
+const COLUMN_CONFIG: Record<string, { bg: string; light: string; border: string; text: string; dot: string }> = {
+  New:       { bg: "bg-blue-500",    light: "bg-blue-50",    border: "border-blue-200",    text: "text-blue-700",    dot: "bg-blue-500" },
+  Applied:   { bg: "bg-emerald-500", light: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700", dot: "bg-emerald-500" },
+  Interview: { bg: "bg-amber-500",   light: "bg-amber-50",   border: "border-amber-200",   text: "text-amber-700",   dot: "bg-amber-500" },
+  Offer:     { bg: "bg-purple-500",  light: "bg-purple-50",  border: "border-purple-200",  text: "text-purple-700",  dot: "bg-purple-500" },
+  Rejected:  { bg: "bg-red-500",     light: "bg-red-50",     border: "border-red-200",     text: "text-red-700",     dot: "bg-red-500" },
+};
+
+const KANBAN_STATUSES = ["New", "Applied", "Interview", "Offer", "Rejected"];
 
 const AGENT_DOT_COLORS: Record<string, string> = {
   venuja1: "bg-teal-500",
@@ -56,6 +53,13 @@ const AGENT_DOT_COLORS: Record<string, string> = {
   dunteesja1: "bg-orange-500",
   purvaja1: "bg-violet-500",
   ramanaja1: "bg-green-500",
+};
+
+const SOURCE_STYLES: Record<string, string> = {
+  Dice: "bg-orange-100 text-orange-700",
+  LinkedIn: "bg-blue-100 text-blue-700",
+  Indeed: "bg-purple-100 text-purple-700",
+  CareerBuilder: "bg-green-100 text-green-700",
 };
 
 function formatNextRun(d: string) {
@@ -77,8 +81,8 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [running, setRunning] = useState(false);
   const [schedule, setSchedule] = useState<ScheduleConfig | null>(null);
+  const [showAllColumns, setShowAllColumns] = useState(false);
 
-  // Fetch schedule for admin banner
   useEffect(() => {
     if (!isAdmin) return;
     fetch("/api/admin/schedule")
@@ -125,10 +129,10 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
   const stats = data?.stats || { total: 0, Applied: 0, Interview: 0, Pending: 0, Offer: 0, New: 0 };
   const showAgentOnCard = selectedAgent === "all" && userAgents.length > 1;
 
-  // Group jobs by status for kanban
+  // Group jobs by status
   const jobsByStatus: Record<string, HubJob[]> = {};
-  for (const col of KANBAN_COLUMNS) {
-    jobsByStatus[col.status] = [];
+  for (const s of KANBAN_STATUSES) {
+    jobsByStatus[s] = [];
   }
   for (const job of jobs) {
     const normalized = job.status.charAt(0).toUpperCase() + job.status.slice(1).toLowerCase();
@@ -137,6 +141,11 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
     }
   }
 
+  // Filter columns: only show non-empty unless showAllColumns is on
+  const visibleColumns = showAllColumns
+    ? KANBAN_STATUSES
+    : KANBAN_STATUSES.filter((s) => (jobsByStatus[s]?.length || 0) > 0);
+
   const title =
     selectedAgent === "all"
       ? "All Jobs"
@@ -144,9 +153,9 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
-      {/* Sidebar — light gray */}
-      <aside className="w-64 bg-gray-100 border-r border-gray-200 flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-gray-200">
+      {/* Sidebar */}
+      <aside className="w-64 bg-white border-r border-gray-100 shadow-sm flex flex-col flex-shrink-0">
+        <div className="p-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <svg width="28" height="28" viewBox="0 0 44 44" fill="none">
               <rect x="2" y="2" width="40" height="40" rx="10" stroke="hsl(174, 72%, 46%)" strokeWidth="2.5" fill="none" />
@@ -158,7 +167,7 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
         </div>
 
         <ScrollArea className="flex-1 p-3">
-          <p className="text-xs font-medium text-gray-500 mb-2 px-2">AGENTS</p>
+          <p className="text-xs font-medium text-gray-400 mb-2 px-2 uppercase tracking-wider">Agents</p>
 
           {isAdmin && (
             <button
@@ -166,7 +175,7 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
               className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition-colors ${
                 selectedAgent === "all"
                   ? "bg-orange-50 text-orange-700 font-medium border border-orange-200"
-                  : "text-gray-700 hover:bg-gray-200"
+                  : "text-gray-700 hover:bg-gray-50"
               }`}
               data-testid="button-all-agents"
             >
@@ -182,22 +191,19 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
               className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 transition-colors ${
                 selectedAgent === agent.id
                   ? "bg-orange-50 text-orange-700 font-medium border border-orange-200"
-                  : "text-gray-700 hover:bg-gray-200"
+                  : "text-gray-700 hover:bg-gray-50"
               }`}
               data-testid={`button-agent-${agent.id}`}
             >
-              <span
-                className={`inline-block w-2 h-2 rounded-full mr-2 ${AGENT_DOT_COLORS[agent.id] || "bg-gray-400"}`}
-              />
+              <span className={`inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle ${AGENT_DOT_COLORS[agent.id] || "bg-gray-400"}`} />
               {agent.name}
-              <span className="block text-xs text-gray-500 pl-4">{agent.role}</span>
+              <span className="block text-xs text-gray-400 pl-5 mt-0.5">{agent.role}</span>
             </button>
           ))}
         </ScrollArea>
 
-        {/* Admin links */}
         {isAdmin && (
-          <div className="p-3 border-t border-gray-200 space-y-1.5">
+          <div className="p-3 border-t border-gray-100 space-y-1.5">
             <button
               onClick={() => setLocation("/admin")}
               className="w-full text-left px-3 py-2 rounded-lg text-sm text-blue-600 hover:bg-blue-50 transition-colors flex items-center gap-2 font-medium"
@@ -218,19 +224,18 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
           </div>
         )}
 
-        {/* User footer */}
-        <div className="p-3 border-t border-gray-200">
+        <div className="p-3 border-t border-gray-100">
           <div className="flex items-center gap-2 px-2">
             {user?.picture && (
               <img src={user.picture} className="w-7 h-7 rounded-full" alt="" />
             )}
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-gray-900 truncate">{user?.name}</p>
-              <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+              <p className="text-xs text-gray-400 truncate">{user?.email}</p>
             </div>
             <button
               onClick={logout}
-              className="text-gray-400 hover:text-gray-700 transition-colors"
+              className="text-gray-300 hover:text-gray-600 transition-colors"
               data-testid="button-logout"
             >
               <LogOut className="w-4 h-4" />
@@ -241,7 +246,7 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
 
       {/* Main content */}
       <main className="flex-1 overflow-auto">
-        {/* Schedule banner (admin only) */}
+        {/* Schedule banner */}
         {isAdmin && schedule?.enabled && schedule.nextRun && (
           <div className="bg-teal-50 border-b border-teal-200 px-6 py-2 text-xs text-teal-700 flex items-center gap-2">
             <Clock className="w-3.5 h-3.5" />
@@ -249,8 +254,8 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
           </div>
         )}
 
-        {/* White header */}
-        <div className="bg-white border-b border-gray-200 px-6 py-4">
+        {/* Header */}
+        <div className="bg-white shadow-sm border-b border-gray-100 px-6 py-4">
           <div className="flex items-start justify-between mb-4">
             <div>
               <h1 className="text-xl font-bold text-gray-900" data-testid="text-dashboard-title">
@@ -264,22 +269,40 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
             </div>
             <div className="flex items-center gap-3">
               {/* Source filter */}
-              <Select value={sourceFilter} onValueChange={setSourceFilter}>
-                <SelectTrigger className="w-[140px] bg-white border-gray-200 text-gray-700 text-sm" data-testid="select-source-filter">
-                  <SelectValue placeholder="All Sources" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Sources</SelectItem>
-                  <SelectItem value="Dice">Dice</SelectItem>
-                  <SelectItem value="LinkedIn">LinkedIn</SelectItem>
-                </SelectContent>
-              </Select>
+              <select
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+                data-testid="select-source-filter"
+              >
+                <option value="all">All Sources</option>
+                <option value="Dice">Dice</option>
+                <option value="LinkedIn">LinkedIn</option>
+                <option value="Indeed">Indeed</option>
+                <option value="CareerBuilder">CareerBuilder</option>
+              </select>
+
+              {/* Show all columns toggle */}
+              {isAdmin && (
+                <button
+                  onClick={() => setShowAllColumns(!showAllColumns)}
+                  className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                    showAllColumns
+                      ? "bg-gray-100 border-gray-300 text-gray-700"
+                      : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
+                  }`}
+                  title={showAllColumns ? "Hide empty columns" : "Show all columns"}
+                >
+                  {showAllColumns ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  {showAllColumns ? "Hide Empty" : "Show All"}
+                </button>
+              )}
 
               {isAdmin && (
                 <button
                   onClick={handleRunNow}
                   disabled={running}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
                 >
                   {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                   {running ? "Running..." : "Run Agents Now"}
@@ -288,12 +311,28 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
             </div>
           </div>
 
-          {/* KPI pills row */}
-          <div className="flex flex-wrap gap-3">
-            <KPIPill icon={Briefcase} label="Total" value={stats.total} color="text-teal-600" bg="bg-teal-50" />
-            <KPIPill icon={CheckCircle} label="Applied" value={stats.Applied || 0} color="text-green-600" bg="bg-green-50" />
-            <KPIPill icon={Users} label="Interviews" value={stats.Interview || 0} color="text-purple-600" bg="bg-purple-50" />
-            <KPIPill icon={Award} label="Offers" value={stats.Offer || 0} color="text-amber-600" bg="bg-amber-50" />
+          {/* KPI pills */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 bg-gray-100 rounded-full px-3 py-1">
+              <Briefcase className="w-3.5 h-3.5 text-gray-500" />
+              <span className="text-xs text-gray-500">Total</span>
+              <span className="text-sm font-bold text-gray-900">{stats.total}</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-emerald-50 rounded-full px-3 py-1">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-xs text-emerald-600">Applied</span>
+              <span className="text-sm font-bold text-emerald-700">{stats.Applied || 0}</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-amber-50 rounded-full px-3 py-1">
+              <Users className="w-3.5 h-3.5 text-amber-600" />
+              <span className="text-xs text-amber-600">Interviews</span>
+              <span className="text-sm font-bold text-amber-700">{stats.Interview || 0}</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-purple-50 rounded-full px-3 py-1">
+              <Award className="w-3.5 h-3.5 text-purple-600" />
+              <span className="text-xs text-purple-600">Offers</span>
+              <span className="text-sm font-bold text-purple-700">{stats.Offer || 0}</span>
+            </div>
           </div>
         </div>
 
@@ -301,42 +340,50 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
         <div className="p-6">
           {isLoading ? (
             <div className="text-center py-20 text-gray-400">Loading jobs...</div>
+          ) : visibleColumns.length === 0 ? (
+            <div className="text-center py-20 text-gray-400">
+              <Briefcase className="w-10 h-10 mx-auto mb-3 text-gray-300" />
+              <p className="text-sm">No jobs found</p>
+              <p className="text-xs mt-1">Try changing filters or run agents to fetch new jobs</p>
+            </div>
           ) : (
             <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: "60vh" }}>
-              {KANBAN_COLUMNS.map((col) => {
-                const colJobs = jobsByStatus[col.status] || [];
+              {visibleColumns.map((status) => {
+                const colJobs = jobsByStatus[status] || [];
+                const config = COLUMN_CONFIG[status];
                 return (
                   <div
-                    key={col.status}
-                    className="flex-1 min-w-[240px] max-w-[320px] flex flex-col"
+                    key={status}
+                    className="min-w-[280px] max-w-[320px] flex flex-col flex-1"
                   >
                     {/* Column header */}
-                    <div className={`${col.headerBg} border ${col.headerBorder} rounded-t-lg px-3 py-2 flex items-center gap-2`}>
-                      <span className={`w-2 h-2 rounded-full ${col.dotBg}`} />
-                      <span className={`text-xs font-bold uppercase tracking-wider ${col.headerText}`}>
-                        {col.label}
-                      </span>
-                      <span className={`ml-auto text-xs font-semibold ${col.headerText}`}>
+                    <div className={`${config.light} border ${config.border} rounded-t-xl px-4 py-3 flex items-center justify-between`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${config.dot}`} />
+                        <span className={`text-sm font-bold uppercase tracking-wide ${config.text}`}>
+                          {status}
+                        </span>
+                      </div>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${config.bg} text-white`}>
                         {colJobs.length}
                       </span>
                     </div>
 
                     {/* Column body */}
-                    <div className="flex-1 bg-gray-100 border-x border-b border-gray-200 rounded-b-lg p-2 space-y-2 overflow-y-auto" style={{ maxHeight: "calc(100vh - 320px)" }}>
-                      {colJobs.length === 0 ? (
-                        <div className="text-center py-8 text-gray-400 text-xs">No jobs</div>
-                      ) : (
-                        colJobs.map((job) => (
-                          <JobCard
-                            key={job.id}
-                            job={job}
-                            showAgent={showAgentOnCard}
-                            onStatusChange={(status) =>
-                              statusMutation.mutate({ id: job.id, status })
-                            }
-                          />
-                        ))
-                      )}
+                    <div
+                      className={`flex-1 bg-gray-50 border-x border-b ${config.border} rounded-b-xl p-2.5 space-y-2.5 overflow-y-auto`}
+                      style={{ maxHeight: "calc(100vh - 320px)" }}
+                    >
+                      {colJobs.map((job) => (
+                        <JobCard
+                          key={job.id}
+                          job={job}
+                          showAgent={showAgentOnCard}
+                          onStatusChange={(newStatus) =>
+                            statusMutation.mutate({ id: job.id, status: newStatus })
+                          }
+                        />
+                      ))}
                     </div>
                   </div>
                 );
@@ -345,7 +392,6 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
           )}
         </div>
 
-        {/* Footer */}
         <footer className="pb-4 text-center">
           <a
             href="https://www.perplexity.ai/computer"
@@ -361,28 +407,6 @@ export default function DashboardPage({ onReports }: { onReports?: () => void } 
   );
 }
 
-function KPIPill({
-  icon: Icon,
-  label,
-  value,
-  color,
-  bg,
-}: {
-  icon: any;
-  label: string;
-  value: number;
-  color: string;
-  bg: string;
-}) {
-  return (
-    <div className={`${bg} border border-gray-200 rounded-lg px-3 py-2 flex items-center gap-2`}>
-      <Icon className={`w-4 h-4 ${color}`} />
-      <span className="text-xs text-gray-500">{label}</span>
-      <span className={`text-sm font-bold ${color}`}>{value}</span>
-    </div>
-  );
-}
-
 function JobCard({
   job,
   showAgent,
@@ -392,63 +416,57 @@ function JobCard({
   showAgent: boolean;
   onStatusChange: (status: string) => void;
 }) {
-  const isDice = job.source === "Dice";
+  const agentDot = AGENT_DOT_COLORS[job.agent] || "bg-gray-400";
+  const agentName = allAgents.find((a) => a.id === job.agent)?.name || job.agent;
+  const sourceBadge = SOURCE_STYLES[job.source] || "bg-gray-100 text-gray-600";
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow">
-      {/* Title */}
-      <p className="text-xs font-semibold text-gray-900 line-clamp-2 mb-1" title={job.title}>
-        {job.title}
-      </p>
-
-      {/* Company */}
-      <p className="text-[11px] text-gray-500 mb-1">{job.company}</p>
-
-      {/* Location */}
-      <p className="text-[10px] text-gray-400 mb-2">{job.location}</p>
-
-      {/* Source badge + agent */}
-      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-        <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-            isDice
-              ? "bg-orange-100 text-orange-600"
-              : "bg-blue-100 text-blue-600"
-          }`}
-        >
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all p-4 cursor-pointer group">
+      {/* Top row: source badge + agent dot */}
+      <div className="flex items-center justify-between mb-2">
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sourceBadge}`}>
           {job.source}
         </span>
         {showAgent && (
-          <span className="inline-flex items-center gap-1 text-[10px] text-gray-500">
-            <span className={`w-1.5 h-1.5 rounded-full ${AGENT_DOT_COLORS[job.agent] || "bg-gray-400"}`} />
-            {allAgents.find((a) => a.id === job.agent)?.name || job.agent}
-          </span>
+          <div className="flex items-center gap-1">
+            <span className={`w-2.5 h-2.5 rounded-full ${agentDot}`} />
+            <span className="text-[10px] text-gray-400">{agentName}</span>
+          </div>
         )}
       </div>
 
-      {/* Actions: status change + apply */}
-      <div className="flex items-center justify-between">
-        <Select value={job.status} onValueChange={onStatusChange}>
-          <SelectTrigger className="h-6 w-[90px] text-[10px] bg-gray-50 border-gray-200 px-1.5 focus:ring-0" data-testid={`select-status-${job.id}`}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {JOB_STATUSES.map((s) => (
-              <SelectItem key={s} value={s} className="text-xs">
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Job title */}
+      <h3 className="text-sm font-semibold text-gray-900 mb-1 line-clamp-2 group-hover:text-teal-600 transition-colors">
+        {job.title}
+      </h3>
 
-        <button
-          onClick={() => window.open(job.job_url, "_blank")}
-          className="flex items-center gap-1 text-[10px] font-semibold text-teal-600 hover:text-teal-700 transition-colors"
+      {/* Company */}
+      <p className="text-xs text-gray-600 font-medium mb-0.5">{job.company}</p>
+
+      {/* Location */}
+      <p className="text-xs text-gray-400 mb-3">{job.location}</p>
+
+      {/* Bottom: status dropdown + Apply button */}
+      <div className="flex items-center justify-between gap-2">
+        <select
+          value={job.status}
+          onChange={(e) => onStatusChange(e.target.value)}
+          className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-400 flex-1 min-w-0"
+          data-testid={`select-status-${job.id}`}
+        >
+          {JOB_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <a
+          href={job.job_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs bg-teal-500 text-white px-3 py-1 rounded-lg hover:bg-teal-600 transition-colors font-medium flex items-center gap-1 whitespace-nowrap shadow-sm"
           data-testid={`button-apply-${job.id}`}
         >
-          <ExternalLink className="w-3 h-3" />
-          Apply
-        </button>
+          Apply <ExternalLink className="w-3 h-3" />
+        </a>
       </div>
     </div>
   );
